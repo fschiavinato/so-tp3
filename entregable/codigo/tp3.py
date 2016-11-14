@@ -128,7 +128,24 @@ class Node(object):
     def __find_nodes(self, contact_nodes, thing_hash):
         queue = contact_nodes
         processed = set()
+        candidatos = {}
         nodes_min = {}
+        candidatos[self.__hash] = self.__rank
+        processed.add(self.__rank)
+        while(len(queue) > 0):
+            node_hash, node_rank = queue.pop()
+            if(node_rank not in processed):
+                processed.add(node_rank)
+                self.__comm.send(thing_hash, dest=node_rank, tag=TAG_NODE_FIND_NODES_REQ)
+                print node_rank
+                print self.__rank
+                response = self.__comm.recv(source=node_rank, tag=TAG_NODE_FIND_NODES_RESP)
+                queue.extend(response)
+            else:
+                candidatos[node_hash] = node_rank
+        for node_hash, node_rank in self.__get_mins(candidatos, thing_hash):
+            nodes_min[node_hash] = node_rank
+        print(nodes_min)
 
 	###################
 	# Completar
@@ -138,6 +155,26 @@ class Node(object):
     # casi igual a find_node pero agrega los archivos necesarios al hacer join. Pueden hacerlo en un solo método
     def __find_nodes_join(self, contact_nodes):
         nodes_min = set()
+        queue = contact_nodes
+        processed = set()
+        candidatos = {}
+        nodes_min = {}
+        processed.add(self.__rank)
+        while(len(queue) > 0):
+            node_hash, node_rank = queue.pop()
+            if node_rank not in processed:
+                processed.add(node_rank)
+                self.__comm.send((self.__hash, self.__rank), dest=node_rank, tag=TAG_NODE_FIND_NODES_JOIN_REQ)
+                response = self.__comm.recv(source=node_rank, tag=TAG_NODE_FIND_NODES_JOIN_RESP)
+                # response = (node_min, files)
+                queue.extend(response[0])
+                for file_hash, file_path in response[1].items():
+                    self.__files[file_hash] = file_path
+            else:
+                candidatos[node_hash] = node_rank
+        for node_hash, node_rank in self.__get_mins(candidatos, self.__hash):
+            nodes_min[node_hash] = node_rank
+
 	################
 	# Completar
 	################
@@ -149,7 +186,6 @@ class Node(object):
     def __get_closest_files(self, node_hash):
         # devuelve los archivos en self.__files que son más cercanos a node_hash que a self.__hash
         files = {}
-        print self.__files
         for file_hash, file_name in self.__files.items():
             if distance (file_hash, self.__hash) > distance (file_hash, node_hash):
                 files[file_hash] = file_name
@@ -225,11 +261,13 @@ class Node(object):
 	#     Completar
 	########################
  
+        print nodes_min
+        # Todos estan a la misma distancia del hash, entonces todos guardan el archivo.
+        for node_hash, node_rank in nodes_min.items():
+            self.__comm.send(data, dest=node_rank, tag=TAG_NODE_STORE_REQ)
             # Envio el archivo a los nodos más cercanos
 
     def __handle_console_look_up(self, source, data):
-        # IMPORTANTE El store va a generar MSJs entre nodos el cual necesita
-        # VARIAS respuesta que se procesa en este ciclo (más abajo).
         file_hash = data
 
         print("[D] [{:02d}] [CONSOLE|LOOK-UP] Buscando archivo con hash '{}'".format(self.__rank, file_hash))
@@ -240,11 +278,18 @@ class Node(object):
         # Propago consulta de find nodes a traves de mis minimos locales.
         nodes_min = self.__find_nodes(nodes_min_local, file_hash)
 
+        print(nodes_min)
+
 	########################
 	#     Completar
 	########################
-        # Devuelvo el archivo.
-        self.__comm.send(data, dest=source, tag=TAG_CONSOLE_LOOKUP_RESP)
+        # Devuelvo el archivo. todos los de node_min están a la misma distancia, entonces todos tienen que tener el archivo.
+        self.__comm.send(file_hash, dest=nodes_min[0], tag=TAG_NODE_LOOKUP_REQ)
+
+        # Recibir pedido de LOOK-UP.
+        data = self.__comm.recv(source=nodes_min[0], tag=TAG_NODE_LOOKUP_RESP)
+        
+        return data
 
     def __handle_console_finish(self, data):
         self.__finished = True
