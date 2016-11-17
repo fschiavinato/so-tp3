@@ -158,7 +158,6 @@ class Node(object):
         queue = contact_nodes
         processed = set()
         candidatos = {}
-        nodes_min = {}
         processed.add(self.__rank)
         while(len(queue) > 0):
             node_hash, node_rank = queue.pop()
@@ -173,7 +172,7 @@ class Node(object):
             else:
                 candidatos[node_hash] = node_rank
         for node_hash, node_rank in self.__get_mins(candidatos, self.__hash):
-            nodes_min[node_hash] = node_rank
+            nodes_min.add((node_hash, node_rank))
 
 	################
 	# Completar
