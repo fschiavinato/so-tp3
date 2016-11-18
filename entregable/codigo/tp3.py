@@ -137,15 +137,12 @@ class Node(object):
             if(node_rank not in processed):
                 processed.add(node_rank)
                 self.__comm.send(thing_hash, dest=node_rank, tag=TAG_NODE_FIND_NODES_REQ)
-                print node_rank
-                print self.__rank
                 response = self.__comm.recv(source=node_rank, tag=TAG_NODE_FIND_NODES_RESP)
                 queue.extend(response)
             else:
                 candidatos[node_hash] = node_rank
         for node_hash, node_rank in self.__get_mins(candidatos, thing_hash):
             nodes_min[node_hash] = node_rank
-        print(nodes_min)
 
 	###################
 	# Completar
@@ -260,7 +257,6 @@ class Node(object):
 	#     Completar
 	########################
  
-        print nodes_min
         # Todos estan a la misma distancia del hash, entonces todos guardan el archivo.
         for node_hash, node_rank in nodes_min.items():
             self.__comm.send(data, dest=node_rank, tag=TAG_NODE_STORE_REQ)
@@ -277,18 +273,23 @@ class Node(object):
         # Propago consulta de find nodes a traves de mis minimos locales.
         nodes_min = self.__find_nodes(nodes_min_local, file_hash)
 
-        print(nodes_min)
+        print("[D] [{:02d}] [CONSOLE|LOOK-UP] Le pregunto a los nodos más cercanos '{}'".format(self.__rank, nodes_min))
 
 	########################
 	#     Completar
 	########################
         # Devuelvo el archivo. todos los de node_min están a la misma distancia, entonces todos tienen que tener el archivo.
-        self.__comm.send(file_hash, dest=nodes_min[0], tag=TAG_NODE_LOOKUP_REQ)
+        response = False
+        for (node_hash, node_rank) in nodes_min.items():
+            if not response and self.__rank != node_rank:
+                self.__comm.send(file_hash, dest=node_rank, tag=TAG_NODE_LOOKUP_REQ)
 
-        # Recibir pedido de LOOK-UP.
-        data = self.__comm.recv(source=nodes_min[0], tag=TAG_NODE_LOOKUP_RESP)
-        
-        return data
+                # Recibir pedido de LOOK-UP.
+                response = self.__comm.recv(source=node_rank, tag=TAG_NODE_LOOKUP_RESP)
+                # Response es el path del archivo o bien false.
+            elif self.__rank == node_rank and file_hash in self.__files:
+                response = self.__files[file_hash]
+        self.__comm.send(response, dest=source, tag=TAG_CONSOLE_LOOKUP_RESP)
 
     def __handle_console_finish(self, data):
         self.__finished = True
@@ -349,7 +350,10 @@ class Node(object):
         print("[D] [{:02d}] [NODE|LOOK-UP] Buscando archivo con hash '{}'".format(self.__rank, file_hash))
         print("[D] [{:02d}] [NODE|LOOK-UP] Tabla de archivos: {}".format(self.__rank, self.__files))
 
-        data = self.__files[file_hash]
+        if file_hash in self.__files:
+            data = self.__files[file_hash]
+        else:
+            data = False
         self.__comm.send(data, dest=source, tag=TAG_NODE_LOOKUP_RESP)
 
     def __handle_node_store_req(self, data):
