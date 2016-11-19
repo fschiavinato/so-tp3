@@ -3,6 +3,7 @@
 import hashlib
 import random
 import sys
+import time
 
 from mpi4py import MPI
 
@@ -32,7 +33,7 @@ TAG_NODE_LOOKUP_RESP = 26
 
 TAG_NODE_STORE_REQ = 27
 
-# Tamaño de mi tabla 
+# Tamaño de mi tabla
 K = 8
 
 def tag_to_string(tag):
@@ -52,6 +53,8 @@ def tag_to_string(tag):
         TAG_NODE_LOOKUP_REQ: "TAG_NODE_LOOKUP_REQ",
         TAG_NODE_LOOKUP_RESP: "TAG_NODE_LOOKUP_RESP",
         TAG_NODE_STORE_REQ: "TAG_NODE_STORE_REQ",
+
+
     }
 
     return name_map[tag]
@@ -99,7 +102,7 @@ class Node(object):
         # nodes = dict(node_hash: node_rank)
 
         # Calculo máximo.
-        dist_max = sys.minint
+        dist_max = 0
         for node_hash in nodes:
             if distance(node_hash, thing_hash) > dist_max:
                 dist_max = distance(node_hash, thing_hash)
@@ -124,7 +127,9 @@ class Node(object):
                 del self.__routing_table[node_max_hash]
                 self.__routing_table[node_hash] = node_rank
 
-    # Le pregunta a los nodos mínimos por el hash 
+    # Le pregunta a los nodos mínimos por el hash
+    # Hace la pregunta de forma recursiva (a los nodos de mínima distancia
+    # que se le pasan y a que van siendo mínima de los que obtiene de consultarle a cada uno
     def __find_nodes(self, contact_nodes, thing_hash):
         queue = contact_nodes
         processed = set()
@@ -139,9 +144,9 @@ class Node(object):
                 self.__comm.send(thing_hash, dest=node_rank, tag=TAG_NODE_FIND_NODES_REQ)
                 response = self.__comm.recv(source=node_rank, tag=TAG_NODE_FIND_NODES_RESP)
                 queue.extend(response)
-            else:
-                candidatos[node_hash] = node_rank
-        for node_hash, node_rank in self.__get_mins(candidatos, thing_hash):
+                for (node_hash, node_rank) in response[0]:
+                    candidatos[node_hash] = node_rank
+        for node_hash, node_rank in candidatos.items():
             nodes_min[node_hash] = node_rank
 
 	###################
@@ -149,7 +154,9 @@ class Node(object):
 	###################
         return nodes_min
 
-    # casi igual a find_node pero agrega los archivos necesarios al hacer join. Pueden hacerlo en un solo método
+    # casi igual a find_node pero cada nodo va borrando los archivos que ya estarían más cercano al find nodes
+    # o copiando los mismos si es igual la distaancia. Además le devuelve los archivos 
+    # que le correspondería tener a él
     def __find_nodes_join(self, contact_nodes):
         nodes_min = set()
         queue = contact_nodes
@@ -166,14 +173,12 @@ class Node(object):
                 queue.extend(response[0])
                 for file_hash, file_path in response[1].items():
                     self.__files[file_hash] = file_path
-            else:
-                candidatos[node_hash] = node_rank
-        for node_hash, node_rank in self.__get_mins(candidatos, self.__hash):
-            nodes_min.add((node_hash, node_rank))
+                for (node_hash, node_rank) in response[0]:
+                    if node_rank != self.__rank:
+                        candidatos[node_hash] = node_rank
+        for node_hash, node_rank in candidatos.items():
+            nodes_min.add((node_hash, node_rank, distance(self.__hash, node_hash)))
 
-	################
-	# Completar
-	################
         return nodes_min
 
     def __print_routing_table(self):
@@ -182,10 +187,21 @@ class Node(object):
     def __get_closest_files(self, node_hash):
         # devuelve los archivos en self.__files que son más cercanos a node_hash que a self.__hash
         files = {}
+        print self.__files
         for file_hash, file_name in self.__files.items():
             if distance (file_hash, self.__hash) > distance (file_hash, node_hash):
                 files[file_hash] = file_name
         return files
+
+    def __get_equal_files(self, node_hash):
+        # devuelve los archivos en self.__files que son igual de cercanos a node_hash que a self.__hash
+        files = {}
+        print self.__files
+        for file_hash, file_name in self.__files.items():
+            if distance (file_hash, self.__hash) == distance (file_hash, node_hash):
+                files[file_hash] = file_name
+        return files
+
 
 
     # Handlers del protocolo CONSOLE.
@@ -218,14 +234,15 @@ class Node(object):
             # de contacto inicial.
             nodes_min = self.__find_nodes_join(data)
 
-            # Convierto set a dict.
-            nodes_min = {node_hash: node_rank for node_hash, node_rank in nodes_min}
+            # obtengo los K mínimos
+            nodes_min = sorted(nodes_min, key=lambda x: x[2])
 
-            # Obtengo el nodo más cercano de todos.
-            nodes_min = self.__get_mins(nodes_min, self.__hash)
+            ## Convierto set a dict.
+            #nodes_min = {node_hash: node_rank for node_hash, node_rank, distancia in nodes_min}
 
-            # Me quedo con los K más cercanos.
-            for index, (node_hash, node_rank) in enumerate(nodes_min):
+
+            # Me quedo con los K más cercanos. 
+            for index, (node_hash, node_rank, distancia) in enumerate(nodes_min):
                 if index < K:
                     self.__routing_table[node_hash] = node_rank
                 else:
@@ -233,12 +250,14 @@ class Node(object):
 
             print("[D] [{:02d}] [CONSOLE|JOIN] Tabla de ruteo: {}".format(self.__rank, self.__routing_table))
 
-            print("[D] [{:02d}] [CONSOLE|JOIN] Tabla de archivs: {}".format(self.__rank, self.__files))
+            print("[D] [{:02d}] [CONSOLE|JOIN] Tabla de archivos: {}".format(self.__rank, self.__files))
 
             self.__initialized = True
 
         print("[+] Inicializacion completa del nodo '{:02d}'".format(self.__rank))
 
+    #  Si soy el nodo de menor distancia, lo guardo yo, si tengo vecinos de igual distancia, tambien se los
+    # mando a guardar a ellos. Si tengo alguno de menor distancia, se lo mando a guardar.
     def __handle_console_store(self, data):
         # IMPORTANTE El store va a generar MSJs entre nodos el cual necesita
         # VARIAS respuesta que se procesa en este ciclo (más abajo).
@@ -253,15 +272,14 @@ class Node(object):
 
         # Propago consulta de find nodes a traves de mis minimos locales.
         nodes_min = self.__find_nodes(nodes_min_local, file_hash)
-	########################
-	#     Completar
-	########################
  
         # Todos estan a la misma distancia del hash, entonces todos guardan el archivo.
         for node_hash, node_rank in nodes_min.items():
             self.__comm.send(data, dest=node_rank, tag=TAG_NODE_STORE_REQ)
-            # Envio el archivo a los nodos más cercanos
 
+            # Envio el archivo a los nodos más cercanos
+    # Busca el archivo entre los más cercanos, a partir del nodo fuente. Les va consultando a cada uno los más cercanos
+    # con __finde_nodes
     def __handle_console_look_up(self, source, data):
         file_hash = data
 
@@ -437,6 +455,8 @@ class Console(object):
                 self.__handle_store(*args)
             elif command == "look-up":
                 self.__handle_look_up(*args)
+            elif command == "test":
+                self.__handle_test(*args)
             else:
                 self.__print_usage()
                 continue
@@ -463,6 +483,10 @@ class Console(object):
             node_rank = int(tokens[1])
             file_name = tokens[2]
             args = [node_rank, file_name]
+        elif tokens[0] in ["t", "test"]:
+            command = "test"
+            commands_file = tokens[1]
+            args = [commands_file]
         else:
             command = None
             args = []
@@ -512,6 +536,28 @@ class Console(object):
         else:
             print(">>> Error al recibir el archivo: {}".format(data))
 
+    def __handle_test(self, commands_file):
+        """Procesa comando: 'test <commands_file>'.
+        """
+        print(">>> Abriendo archivo de comandos para test {}...".format(commands_file))
+        f = open(commands_file, 'r')
+
+        i = 1
+        for line in f:
+            print("Comando {}> {}".format(i, line))
+            command, args = self.__parse_command(line)
+            if command == "quit":
+                self.__handle_quit(*args)
+            elif command == "join":
+                self.__handle_join(*args)
+            elif command == "store":
+                self.__handle_store(*args)
+            elif command == "look-up":
+                self.__handle_look_up(*args)
+            i = i+1
+            time.sleep(1)
+
+
     def __print_usage(self):
         usage = """
         Los comandos disponibles son:
@@ -519,6 +565,7 @@ class Console(object):
             * s|store <node_rank> <file_name>
             * l|look-up <node_rank> <file_name>
             * q|quit
+            * t|test <commands_file>
         """
         print(usage)
 
