@@ -134,7 +134,7 @@ class Node(object):
         queue = contact_nodes
         processed = set()
         candidatos = {}
-        nodes_min = {}
+        nodes_min = set()
         candidatos[self.__hash] = self.__rank
         processed.add(self.__rank)
         while(len(queue) > 0):
@@ -144,10 +144,10 @@ class Node(object):
                 self.__comm.send(thing_hash, dest=node_rank, tag=TAG_NODE_FIND_NODES_REQ)
                 response = self.__comm.recv(source=node_rank, tag=TAG_NODE_FIND_NODES_RESP)
                 queue.extend(response)
-                for (node_hash, node_rank) in response[0]:
+                for (node_hash, node_rank) in response:
                     candidatos[node_hash] = node_rank
         for node_hash, node_rank in candidatos.items():
-            nodes_min[node_hash] = node_rank
+            nodes_min.add((node_hash, node_rank, distance(self.__hash, node_hash)))
 
 	###################
 	# Completar
@@ -274,7 +274,7 @@ class Node(object):
         nodes_min = self.__find_nodes(nodes_min_local, file_hash)
  
         # Todos estan a la misma distancia del hash, entonces todos guardan el archivo.
-        for node_hash, node_rank in nodes_min.items():
+        for (node_hash, node_rank, distance) in nodes_min:
             self.__comm.send(data, dest=node_rank, tag=TAG_NODE_STORE_REQ)
 
             # Envio el archivo a los nodos más cercanos
@@ -298,7 +298,7 @@ class Node(object):
 	########################
         # Devuelvo el archivo. todos los de node_min están a la misma distancia, entonces todos tienen que tener el archivo.
         response = False
-        for (node_hash, node_rank) in nodes_min.items():
+        for (node_hash, node_rank, distance) in nodes_min:
             if not response and self.__rank != node_rank:
                 self.__comm.send(file_hash, dest=node_rank, tag=TAG_NODE_LOOKUP_REQ)
 
