@@ -130,12 +130,12 @@ class Node(object):
     # Le pregunta a los nodos mínimos por el hash
     # Hace la pregunta de forma recursiva (a los nodos de mínima distancia
     # que se le pasan y a que van siendo mínima de los que obtiene de consultarle a cada uno
+
     def __find_nodes(self, contact_nodes, thing_hash):
         queue = contact_nodes
         processed = set()
-        candidatos = {}
-        nodes_min = set()
-        candidatos[self.__hash] = self.__rank
+        nodes_min = {}
+        nodes_min[self.__hash] = self.__rank
         processed.add(self.__rank)
         while(len(queue) > 0):
             node_hash, node_rank = queue.pop()
@@ -145,15 +145,8 @@ class Node(object):
                 response = self.__comm.recv(source=node_rank, tag=TAG_NODE_FIND_NODES_RESP)
                 queue.extend(response)
                 for (node_hash, node_rank) in response:
-                    candidatos[node_hash] = node_rank
-        for node_hash, node_rank in candidatos.items():
-            nodes_min.add((node_hash, node_rank, distance(self.__hash, node_hash)))
-
-	###################
-	# Completar
-	###################
+                    nodes_min[node_hash] = node_rank
         return nodes_min
-
     # casi igual a find_node pero cada nodo va borrando los archivos que ya estarían más cercano al find nodes
     # o copiando los mismos si es igual la distaancia. Además le devuelve los archivos 
     # que le correspondería tener a él
@@ -177,7 +170,7 @@ class Node(object):
                     if node_rank != self.__rank:
                         candidatos[node_hash] = node_rank
         for node_hash, node_rank in candidatos.items():
-            nodes_min.add((node_hash, node_rank, distance(self.__hash, node_hash)))
+            nodes_min.add((node_hash, node_rank))
 
         return nodes_min
 
@@ -232,7 +225,9 @@ class Node(object):
 
             # Propago consulta de find nodes a traves de los minimos de mi nodo
             # de contacto inicial.
-            nodes_min = self.__find_nodes_join(data)
+            nodes_min = self.__find_nodes_join(data)  
+            # expando con un dato que sea la distancia.
+            nodes_min = [(node_hash, node_rank, distance(node_hash, self.__hash)) for node_hash, node_rank in nodes_min]
 
             # obtengo los K mínimos
             nodes_min = sorted(nodes_min, key=lambda x: x[2])
@@ -272,15 +267,20 @@ class Node(object):
 
         # Propago consulta de find nodes a traves de mis minimos locales.
         nodes_min = self.__find_nodes(nodes_min_local, file_hash)
- 
-        # Todos estan a la misma distancia del hash, entonces todos guardan el archivo.
-        for (node_hash, node_rank, distance) in nodes_min:
+
+        # Me quedo con los más cercanos.
+        nodes_min = self.__get_mins(nodes_min, file_hash)
+
+        for (node_hash, node_rank) in nodes_min:
             self.__comm.send(data, dest=node_rank, tag=TAG_NODE_STORE_REQ)
 
             # Envio el archivo a los nodos más cercanos
+
     # Busca el archivo entre los más cercanos, a partir del nodo fuente. Les va consultando a cada uno los más cercanos
     # con __finde_nodes
     def __handle_console_look_up(self, source, data):
+        # IMPORTANTE El store va a generar MSJs entre nodos el cual necesita
+        # VARIAS respuesta que se procesa en este ciclo (más abajo).
         file_hash = data
 
         print("[D] [{:02d}] [CONSOLE|LOOK-UP] Buscando archivo con hash '{}'".format(self.__rank, file_hash))
@@ -291,22 +291,19 @@ class Node(object):
         # Propago consulta de find nodes a traves de mis minimos locales.
         nodes_min = self.__find_nodes(nodes_min_local, file_hash)
 
-        print("[D] [{:02d}] [CONSOLE|LOOK-UP] Le pregunto a los nodos más cercanos '{}'".format(self.__rank, nodes_min))
-
-	########################
-	#     Completar
-	########################
-        # Devuelvo el archivo. todos los de node_min están a la misma distancia, entonces todos tienen que tener el archivo.
         response = False
-        for (node_hash, node_rank, distance) in nodes_min:
+        for (node_hash, node_rank) in nodes_min.items():
             if not response and self.__rank != node_rank:
                 self.__comm.send(file_hash, dest=node_rank, tag=TAG_NODE_LOOKUP_REQ)
 
                 # Recibir pedido de LOOK-UP.
                 response = self.__comm.recv(source=node_rank, tag=TAG_NODE_LOOKUP_RESP)
                 # Response es el path del archivo o bien false.
-            elif self.__rank == node_rank and file_hash in self.__files:
-                response = self.__files[file_hash]
+            elif self.__rank == node_rank:
+                print("[D] [{:02d}] [NODE|LOOK-UP] Buscando archivo con hash '{}'".format(self.__rank, file_hash))
+                print("[D] [{:02d}] [NODE|LOOK-UP] Tabla de archivos: {}".format(self.__rank, self.__files))
+                if file_hash in self.__files:
+                    response = self.__files[file_hash]
         self.__comm.send(response, dest=source, tag=TAG_CONSOLE_LOOKUP_RESP)
 
     def __handle_console_finish(self, data):
@@ -328,15 +325,16 @@ class Node(object):
         # Agrego ARBITRARIAMENTE al nodo actual.
         nodes_min.append((self.__hash, self.__rank))
 
-        # Busco entre mis archivos los más cercanos a node que a mí
-        files = self.__get_closest_files(node_hash)
-
+        # Busco entre mis archivos los más cercanos a node que a mí.
+        files_menor = self.__get_closest_files(node_hash)
+        files_menor_igual = self.__get_equal_files(node_hash)
+	files_menor_igual.update(files_menor)
         # Envio los nodos más cercanos y los archivos más cercanos a node que tenía yo
-        data = (nodes_min, files)
+        data = (nodes_min, files_menor_igual)
         self.__comm.send(data, dest=node_rank, tag=TAG_NODE_FIND_NODES_JOIN_RESP)
 
         # Borro de mis archivos los más cercanos a node
-        self.__files = {k:v for k,v in self.__files.items() if k not in files.keys()}
+        self.__files = {k:v for k,v in self.__files.items() if k not in files_menor.keys()}
 
         # Actualizo la routing table.
         self.__update_routing_table(node_hash, node_rank)
@@ -580,6 +578,7 @@ if __name__ == "__main__":
         console = Console(rank)
         console.run()
     else:
-        node_id = int(random.uniform(0, 2**K))
+        # node_id = int(random.uniform(0, 2**K))
+        node_id = rank 
         node = Node(rank, node_id)
         node.run()
