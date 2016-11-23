@@ -188,6 +188,8 @@ class Node(object):
 			for elem in vec:
 				if elem[1] not in processed:
 					queue.append(elem)
+			for elem in vec:
+				if elem[1] != self.__rank:
 					candidatos[elem[0]] = elem[1]
 			for k,v in arch.iteritems():
 				self.__files[k] = v
