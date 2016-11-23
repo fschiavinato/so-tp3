@@ -146,7 +146,15 @@ class Node(object):
                 queue.extend(response)
                 for (node_hash, node_rank) in response:
                     nodes_min[node_hash] = node_rank
-        return nodes_min
+        dist_min = sys.maxint
+        for node_min_hash in nodes_min.iterkeys():
+            if dist_min >= distancia(thing_hash,node_min_hash):
+                dist_min = distancia(thing_hash,node_min_hash)
+        nodes_min_min = {}
+        for node_min_hash in nodes_min.iterkeys():
+            if distancia(thing_hash,node_min_hash) = dist_min
+                nodes_min_min[node_min_hash] = nodes_min[node_min_hash]
+        return nodes_min_min
     # casi igual a find_node pero cada nodo va borrando los archivos que ya estarían más cercano al find nodes
     # o copiando los mismos si es igual la distaancia. Además le devuelve los archivos 
     # que le correspondería tener a él
