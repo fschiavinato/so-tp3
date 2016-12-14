@@ -288,6 +288,8 @@ class Node(object):
         # Obtengo minimos locales.
         nodes_min_local = self.__get_local_mins(file_hash)
 
+        print("[D] [{:02d}] [CONSOLE|LOOK-UP] Mis minimos locales '{}'".format(self.__rank, nodes_min_local))
+
         # Propago consulta de find nodes a traves de mis minimos locales.
         nodes_min = self.__find_nodes(nodes_min_local, file_hash)
 
