@@ -151,18 +151,10 @@ class Node(object):
 				if elem[1] not in processed:
 					queue.append(elem)
 				nodes_min[elem[0]] = elem[1]
-		dist_min = sys.maxint
-		for node_min_hash in nodes_min.iterkeys():
-			if dist_min >= distance(thing_hash,node_min_hash):
-				dist_min = distance(thing_hash,node_min_hash)
-		nodes_min_min = {}
-
-		for node_min_hash in nodes_min.iterkeys():
-			if distance(thing_hash,node_min_hash) == dist_min:
-				nodes_min_min[node_min_hash] = nodes_min[node_min_hash]
+		nodes_min = self.__get_mins(nodes_min,thing_hash)
 		return nodes_min_min
 	#casi igual a find_node pero cada nodo va borrando los archivos que ya estarían más cercano al find nodes
-	# o copiando los mismos si es igual la distaancia. Además le devuelve los archivos 
+	# o copiando los mismos si es igual la distaancia. Además le devuelve los archivos
 	# que le correspondería tener a él
 	def __find_nodes_join(self, contact_nodes):
 		nodes_min = set()
@@ -172,7 +164,7 @@ class Node(object):
 		processed.add(self.__rank)
 		cant = 0
 		while(len(queue) > 0 or cant > 0):
-			#pendientes = [] 
+			#pendientes = []
 			for node in queue:
 				node_hash, node_rank = queue.pop()
 				if node_rank not in processed:
@@ -193,8 +185,8 @@ class Node(object):
 					candidatos[elem[0]] = elem[1]
 			for k,v in arch.iteritems():
 				self.__files[k] = v
-			
-			
+
+
 		for node_hash, node_rank in candidatos.items():
 			nodes_min.add((node_hash, node_rank))
 
@@ -274,7 +266,7 @@ class Node(object):
 
 			# Propago consulta de find nodes a traves de los minimos de mi nodo
 			# de contacto inicial.
-			nodes_min = self.__find_nodes_join(data)  
+			nodes_min = self.__find_nodes_join(data)
 			# expando con un dato que sea la distancia.
 			nodes_min = [(node_hash, node_rank, distance(node_hash, self.__hash)) for node_hash, node_rank in nodes_min]
 
@@ -285,7 +277,7 @@ class Node(object):
 			#nodes_min = {node_hash: node_rank for node_hash, node_rank, distancia in nodes_min}
 
 
-			# Me quedo con los K más cercanos. 
+			# Me quedo con los K más cercanos.
 			for index, (node_hash, node_rank, distancia) in enumerate(nodes_min):
 				if index < K:
 					self.__routing_table[node_hash] = node_rank
@@ -628,6 +620,6 @@ if __name__ == "__main__":
 		console.run()
 	else:
 		# node_id = int(random.uniform(0, 2**K))
-		node_id = rank 
+		node_id = rank
 		node = Node(rank, node_id)
 		node.run()
